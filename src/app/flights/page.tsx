@@ -63,7 +63,14 @@ const Flights = () => {
                   <div className="flex flex-col gap-3 font-medium">
                     <div>
                       <div className="relative w-20 h-16">
-                        <Image src={flight.logo} alt="airline name" fill />
+                      {flight.logo ? (
+  <Image src={flight.logo} alt="airline name" fill />
+) : (
+  <div className="w-20 h-16 bg-gray-100 flex items-center justify-center text-xs text-gray-500">
+    No Image
+  </div>
+)}
+
                       </div>
                     </div>
                     <div>{flight.name}</div>

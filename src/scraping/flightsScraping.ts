@@ -13,53 +13,79 @@ interface Flight {
 }
 
 export const startFlightScraping = async (page: Page): Promise<Flight[]> => {
-  return await page.evaluate(async (): Promise<Flight[]> => {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+  console.log("🛫 [startFlightScraping] Yatra scraping started...");
 
-    const flights: Flight[] = [];
+  const maxRetries = 5;
 
-    const flightSelectors = document.querySelectorAll(".nrc6-wrapper");
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    console.log(`🔁 Attempt ${attempt}/${maxRetries}...`);
 
-    flightSelectors.forEach((flightElement) => {
-      const airlineLogo = flightElement.querySelector("img")?.src || "";
-      const [rawDepartureTime, rawArrivalTime] = (
-        flightElement.querySelector(".vmXl")?.innerText || ""
-      ).split(" – ");
+    try {
+      // ✅ Wait for flightItem cards to appear
+      await page.waitForSelector(".flightItem", { timeout: 15000 });
 
-      // Function to extract time and remove numeric values at the end
-      const extractTime = (rawTime: string): string => {
-        const timeWithoutNumbers = rawTime.replace(/[0-9+\s]+$/, "").trim();
-        return timeWithoutNumbers;
-      };
+      // ✅ Scrape inside browser context
+      const flights: Flight[] = await page.evaluate((): Flight[] => {
+        const flightCards = document.querySelectorAll(".flightItem");
+        const flights: Flight[] = [];
 
-      const departureTime = extractTime(rawDepartureTime);
-      const arrivalTime = extractTime(rawArrivalTime);
-      const flightDuration = (
-        flightElement.querySelector(".xdW8")?.children[0]?.innerText || ""
-      ).trim();
+        flightCards.forEach((card, index) => {
+          try {
+            const airlineName =
+              card.querySelector(".airline-name span")?.textContent?.trim() || "";
 
-      const airlineName = (
-        flightElement.querySelector(".VY2U")?.children[1]?.innerText || ""
-      ).trim();
+            const departureTime =
+              card.querySelector(".depart-details .mob-time")?.textContent?.trim() || "";
 
-      // Extract price
-      const price = parseInt(
-        (flightElement.querySelector(".f8F1-price-text")?.innerText || "")
-          .replace(/[^\d]/g, "")
-          .trim(),
-        10
-      );
+            const arrivalTime =
+              card.querySelector(".arrival-details .mob-time")?.textContent?.trim() || "";
 
-      flights.push({
-        airlineLogo,
-        departureTime,
-        arrivalTime,
-        flightDuration,
-        airlineName,
-        price,
+            const flightDuration =
+              card.querySelector(".stops-details .mob-duration")?.textContent?.trim() || "";
+
+            const fareOptions = card.querySelectorAll(".br-fare-block .fare-price");
+            let lowestFare = Infinity;
+
+            fareOptions.forEach((fare) => {
+              const rawPrice = fare.textContent?.replace(/[^\d]/g, "") || "";
+              const price = parseInt(rawPrice, 10);
+              if (!isNaN(price)) {
+                lowestFare = Math.min(lowestFare, price);
+              }
+            });
+
+            const price = isFinite(lowestFare) ? lowestFare : 0;
+
+            flights.push({
+              airlineLogo: "", // can be improved if logo selector found
+              departureTime,
+              arrivalTime,
+              flightDuration,
+              airlineName,
+              price,
+            });
+          } catch (err) {
+            console.error(`❌ Failed to parse flight #${index + 1}:`, err);
+          }
+        });
+
+        return flights;
       });
-    });
 
-    return flights;
-  });
+      if (flights.length > 0) {
+        console.log(`✅ Scraped ${flights.length} flights on attempt ${attempt}`);
+        return flights;
+      }
+
+      console.warn(`⚠️ No flights found on attempt ${attempt}. Retrying in 3 seconds...`);
+      await new Promise((res) => setTimeout(res, 3000));
+
+    } catch (err) {
+      console.warn(`⚠️ Error on attempt ${attempt}:`, err.message);
+      await new Promise((res) => setTimeout(res, 3000));
+    }
+  }
+
+  console.error("❌ All retries exhausted. No flights scraped.");
+  return [];
 };

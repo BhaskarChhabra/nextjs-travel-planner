@@ -72,32 +72,52 @@ export const register = async () => {
                 importQueue.add("package", { ...job, packageDetails: pkg });
               }
             }
-          } else if (job.data.jobType.type === "package") {
-            const alreadyScrapped = await prisma.trips.findUnique({
-              where: { id: job.data.packageDetails.id },
-            });
-            if (!alreadyScrapped) {
-              console.log("Connected! Navigating to " + job.data.url);
-              await page.goto(job.data.url, { timeout: 120000 });
-              console.log("Navigated! Scraping page content...");
-              const pkg = await startPackageScraping(
-                page,
-                job.data.packageDetails
-              );
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-ignore
-              await prisma.trips.create({ data: pkg });
-              await prisma.jobs.update({
-                where: { id: job.data.id },
-                data: { isComplete: true, status: "complete" },
-              });
-            }
-          } else if (job.data.jobType.type === "flight") {
+          } else if (job.data.jobType.type === "hotels") {
+  console.log("Connected! Navigating to " + job.data.url);
+  console.log("📍 Scraping hotels for location:", job.data.location);
+
+  await page.goto(job.data.url, { timeout: 120000 });
+
+  const hotels = await startHotelScraping(page, browser, {
+    url: job.data.url,
+    location: job.data.location,
+  });
+
+  console.log(`Scraping Complete, ${hotels.length} hotels found.`);
+
+  await prisma.jobs.update({
+    where: { id: job.data.id },
+    data: { isComplete: true, status: "complete" },
+  });
+
+  for (const hotel of hotels) {
+    await prisma.hotels.create({
+      data: {
+        name: hotel.title,
+        image: hotel.photo,
+        price: hotel.price,
+        jobId: job.data.id,
+        location: job.data.location.toLowerCase(),
+      },
+    });
+  }
+}
+ else if (job.data.jobType.type === "flight") {
             console.log("in flight scraping");
             console.log("Connected! Navigating to " + job.data.url);
-            await page.goto(job.data.url);
-            console.log("Navigated! Scraping page content...");
-            const flights = await startFlightScraping(page);
+            await page.goto(job.data.url, {
+  waitUntil: "domcontentloaded",
+  timeout: 150000,
+});
+
+await new Promise((res) => setTimeout(res, 10000)); // ✅ Compatible
+// give extra time before scraping
+
+
+        console.log("Navigated to flight page. Calling startFlightScraping...");
+const flights = await startFlightScraping(page);
+console.log(`✅ Scraped ${flights.length} flights.`);
+
 
             await prisma.jobs.update({
               where: { id: job.data.id },
@@ -120,38 +140,32 @@ export const register = async () => {
               });
             }
           } else if (job.data.jobType.type === "hotels") {
-            console.log("Connected! Navigating to " + job.data.url);
-            await page.goto(job.data.url, { timeout: 120000 });
-            console.log("Navigated! Scraping page content...");
-            const hotels = await startHotelScraping(
-              page,
-              browser,
-              job.data.location
-            );
+  console.log("📍 Scraping hotels for location:", job.data.location);
+  const hotels = await startHotelScraping(page, browser, {
+    url: job.data.url,
+    location: job.data.location,
+  });
 
-            console.log(`Scraping Complete, ${hotels.length} hotels found.`);
+  console.log(`Scraping Complete, ${hotels.length} hotels found.`);
 
-            await prisma.jobs.update({
-              where: { id: job.data.id },
-              data: { isComplete: true, status: "complete" },
-            });
+  await prisma.jobs.update({
+    where: { id: job.data.id },
+    data: { isComplete: true, status: "complete" },
+  });
 
-            console.log("Job Marked as complete.");
-            console.log("Starting Loop for Hotels");
-            for (const hotel of hotels) {
-              await prisma.hotels.create({
-                data: {
-                  name: hotel.title,
-                  image: hotel.photo,
-                  price: hotel.price,
-                  jobId: job.data.id,
-                  location: job.data.location.toLowerCase(),
-                },
-              });
-              console.log(`${hotel.title} inserted in DB.`);
-            }
-            console.log("COMPLETE.");
-          }
+  for (const hotel of hotels) {
+    await prisma.hotels.create({
+      data: {
+        name: hotel.title,
+        image: hotel.photo,
+        price: hotel.price,
+        jobId: job.data.id,
+        location: job.data.location.toLowerCase(),
+      },
+    });
+  }
+}
+
         } catch (error) {
           console.log({ error });
           await prisma.jobs.update({

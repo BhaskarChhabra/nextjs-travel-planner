@@ -8,201 +8,112 @@ interface Hotel {
 }
 
 function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export const startHotelScraping = async (
   page: Page,
   browser: Browser,
-  location: string
+  jobData: {
+    url: string;
+    location: string;
+  }
 ): Promise<Hotel[]> => {
-  console.log(`🔍 Searching hotels on Booking.com for: ${location}`);
+  console.log("📦 Incoming jobData:", jobData);
+  const { url, location } = jobData;
+
+  console.log(`🔍 Searching hotels on Yatra.com for: ${location}`);
   await page.setViewport({ width: 1280, height: 800 });
 
   try {
-    // 1. Load Booking.com home page
-    await page.goto("https://www.booking.com/", {
+    // ✅ Navigate to Yatra Hotels page using provided URL
+    await page.goto(url, {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });
-    console.log('ℹ️ Page loaded');
+    console.log("ℹ️ Yatra hotel page loaded");
 
-    // 2. Accept cookies if popup appears
+    // ✅ Accept cookies (if shown)
     try {
-      const cookieAccept = await page.waitForSelector('#onetrust-accept-btn-handler', { timeout: 5000 });
-      if (cookieAccept) {
-        await cookieAccept.click();
+      const cookieBtn = await page.waitForSelector("#cookieConsentBtn", { timeout: 5000 });
+      if (cookieBtn) {
+        await cookieBtn.click();
+        console.log("✅ Accepted cookies");
         await delay(1000);
-        console.log('✅ Accepted cookies');
       }
     } catch {
-      console.log('ℹ️ No cookie popup found');
+      console.log("ℹ️ No cookie popup");
     }
 
-    // 3. Find the search input with updated selectors
-    const searchInputSelectors = [
-      'input[name="ss"]',                         // classic Booking.com search box
-      '[data-testid="searchbox-input"]',          // new testid selector
-      '[aria-label="Search"]',                     // aria label fallback
-    ];
+    // ✅ Type location
+    const locationInputSelector = "#BE_hotel_destination_city";
+    await page.waitForSelector(locationInputSelector);
+    const input = await page.$(locationInputSelector);
+    if (!input) throw new Error("❌ Location input not found");
 
-    let searchInput;
-    for (const selector of searchInputSelectors) {
-      try {
-        searchInput = await page.waitForSelector(selector, { timeout: 10000 });
-        if (searchInput) break;
-      } catch {
-        console.log(`Selector ${selector} not found`);
-      }
+    await input.click({ clickCount: 3 });
+    await input.type(location, { delay: 100 });
+    console.log("ℹ️ Location typed");
+    await delay(2000);
+
+    // ✅ Select first autocomplete option
+    try {
+      await page.waitForSelector(".ac_results li", { timeout: 8000 });
+      await page.click(".ac_results li");
+      console.log("✅ Selected autocomplete");
+    } catch {
+      console.log("❌ Failed to select autocomplete");
     }
 
-    if (!searchInput) {
-      await page.screenshot({ path: 'search-input-not-found.png' });
-      throw new Error('Could not find search input');
+    // ✅ Select check-in and check-out dates
+    try {
+      await page.click("#BE_hotel_checkin_date");
+      await delay(1000);
+      await page.click('td[data-date]:not(.inact):nth-child(2)');
+      await page.click('td[data-date]:not(.inact):nth-child(3)');
+      console.log("✅ Dates selected");
+    } catch {
+      console.log("❌ Failed to select dates");
     }
 
-    // 4. Type location like a human
-    await searchInput.click({ clickCount: 3 });
-    await delay(300);
-    await searchInput.type(location, { delay: 150 });
-    console.log('ℹ️ Typed location');
-    await delay(2000); // wait for autocomplete
-
-    // 5. Handle autocomplete suggestions robustly
-    const handleAutocomplete = async (): Promise<boolean> => {
-      // Updated autocomplete selectors from Booking.com recent DOM
-      const suggestionSelectors = [
-        '[data-testid="autocomplete-result"]:first-child',
-        '.c-autocomplete__item--selected',
-        '.sb-autocomplete__item:first-child',
-        '.search-autocomplete__item--active'
-      ];
-
-      for (const selector of suggestionSelectors) {
-        try {
-          const suggestion = await page.waitForSelector(selector, { timeout: 8000 });
-          if (suggestion) {
-            await suggestion.click();
-            console.log(`✅ Clicked autocomplete suggestion (${selector})`);
-            await delay(1500);
-            return true;
-          }
-        } catch {}
-      }
-
-      // Fallback to keyboard navigation if no clickable suggestion found
-      try {
-        await page.keyboard.press('ArrowDown');
-        await delay(500);
-        await page.keyboard.press('Enter');
-        console.log('✅ Used keyboard selection');
-        await delay(1500);
-        return true;
-      } catch {
-        console.log('Keyboard selection failed');
-      }
-
-      return false;
-    };
-
-    if (!(await handleAutocomplete())) {
-      console.log('ℹ️ Falling back to direct search');
-      await page.keyboard.press('Enter');
-      await delay(2000);
+    // ✅ Submit hotel search
+    try {
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 }),
+        page.click("#BE_hotel_htsearch_btn"),
+      ]);
+      console.log("✅ Hotel search submitted");
+    } catch {
+      console.log("❌ Failed to submit search");
     }
 
-    // 6. Submit the search form and wait for navigation & results
-    console.log('ℹ️ Submitting search...');
+    // ✅ Wait and scrape results
+    await delay(5000);
+    console.log("ℹ️ Scraping hotel cards...");
 
-    const searchButtonSelectors = [
-      '.sb-searchbox__button',
-      '[data-testid="searchbox-submit"]',
-      'button[type="submit"]',
-      'button[data-testid="search-button"]', // newly added possible selector
-    ];
-
-    let clicked = false;
-    for (const selector of searchButtonSelectors) {
-      try {
-        const button = await page.waitForSelector(selector, { timeout: 5000 });
-        if (button) {
-          await button.evaluate((btn) => btn.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
-            button.click(),
-          ]);
-          clicked = true;
-          console.log(`✅ Clicked search button with selector: ${selector}`);
-          break;
-        }
-      } catch (err) {
-        console.log(`❌ Search button selector "${selector}" not found or click failed`);
-      }
-    }
-
-    if (!clicked) {
-      throw new Error('Could not click search button');
-    }
-    console.log('✅ Search submitted');
-
-    // 7. Wait some extra time for results to stabilize
-    await delay(4000);
-
-    // 8. Scrape hotels using updated selectors
-    console.log('ℹ️ Scraping hotel data...');
     const hotels = await page.evaluate(() => {
-      // Updated container selectors for hotel cards
-      const cards = Array.from(document.querySelectorAll('[data-testid="property-card"], .sr_property_block'));
+      const cards = Array.from(document.querySelectorAll(".hotel-card"));
 
-      return cards.map(card => {
-        const title =
-          card.querySelector('[data-testid="title"]')?.textContent?.trim() ||
-          card.querySelector('.sr-hotel__name')?.textContent?.trim() ||
-          card.querySelector('h3, h4')?.textContent?.trim() ||
-          'Unknown';
+      return cards
+        .map((card) => {
+          const title = card.querySelector(".hotel-name")?.textContent?.trim() || "Unknown";
+          const priceRaw = card.querySelector(".price")?.textContent?.trim() || "";
+          const price = priceRaw.replace(/[^\d.,]/g, "");
+          const photo = (card.querySelector("img.hotel-img") as HTMLImageElement)?.src || "";
+          const rating = card.querySelector(".rating-text")?.textContent?.trim() || "";
 
-        // Price selectors - trying multiple patterns, extract digits and commas/periods
-        const priceElement =
-          card.querySelector('[data-testid="price-and-discounted-price"]') ||
-          card.querySelector('.bui-price-display__value') ||
-          Array.from(card.querySelectorAll('span, div')).find(el =>
-            /\d+/.test(el.textContent || '') && /[$€£₹¥₩₽]/.test(el.textContent || '')
-          );
-
-        const rawPrice = priceElement?.textContent?.trim() || '';
-        // Extract only numbers, dots, commas from price string
-        const price = rawPrice.replace(/[^\d.,]/g, '');
-
-        // Image selectors - try multiple fallbacks
-        const photo =
-          (card.querySelector('img[data-testid="image"]') as HTMLImageElement)?.src ||
-          (card.querySelector('.hotel_image, .sr_item_photo, img') as HTMLImageElement)?.src ||
-          '';
-
-        // Rating selectors
-        const rating =
-          card.querySelector('[aria-label*="Scored"]')?.textContent?.trim() ||
-          card.querySelector('.bui-review-score__badge')?.textContent?.trim() ||
-          '';
-
-        return {
-          title,
-          price,
-          photo,
-          rating
-        };
-      }).filter(hotel => hotel.title !== 'Unknown' && hotel.price);
+          return { title, price, photo, rating };
+        })
+        .filter((hotel) => hotel.title !== "Unknown" && hotel.price);
     });
 
-    console.log(`✅ Successfully scraped ${hotels.length} hotels`);
+    console.log(`✅ Scraped ${hotels.length} hotels`);
     return hotels;
-
   } catch (err) {
     console.error("❌ Scraping failed:", err);
-    await page.screenshot({ path: `booking-error-${Date.now()}.png` });
+    await page.screenshot({ path: `yatra-error-${Date.now()}.png` });
     throw err;
   } finally {
-    console.log('ℹ️ Scraping process completed');
+    console.log("ℹ️ Hotel scraping process completed");
   }
 };
